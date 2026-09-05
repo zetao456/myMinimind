@@ -1,0 +1,35 @@
+__pycache__/
+*.pyc
+.DS_Store
+out
+website/
+docs-minimind/
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+!.env.example
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+# Training data and caches
+dataset/*.jsonl
+dataset/*.cached_*/
+
+# Model weights and checkpoints
+checkpoints/
+out/
+*.pth
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Experiment logs
+wandb/
+swanlog/
+runs/
+logs/
