@@ -1,4 +1,5 @@
 import time
+import os
 import argparse
 import random
 import warnings
@@ -22,8 +23,10 @@ def init_model(args):
         ckp = f'./{args.save_dir}/{args.weight}_{args.hidden_size}{moe_suffix}.pth'
         model.load_state_dict(torch.load(ckp, map_location=args.device), strict=True)
         if args.lora_weight != 'None':
-            apply_lora(model)
-            load_lora(model, f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth')
+            lora_path = f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}{moe_suffix}.pth'
+            if moe_suffix and not os.path.exists(lora_path):
+                lora_path = f'./{args.save_dir}/{args.lora_weight}_{args.hidden_size}.pth'
+            load_lora(model, lora_path)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.load_from, trust_remote_code=True)
     get_model_params(model, model.config)

@@ -8,6 +8,8 @@ This is a minimal LLM (Large Language Model) implementation called "MyMiniMind" 
 
 ## Key Files and Structure
 
+- Documentation index: [docs/README.md](docs/README.md). Technical documents live under `docs/model/`, `docs/training/`, and `docs/data/`; add new documents to this index.
+
 - `model/model_myminimind.py`: Main model implementation containing:
   - `MyMiniMindConfig`: Configuration class extending PretrainedConfig
   - `RMSNorm`: Custom RMS normalization layer

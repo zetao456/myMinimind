@@ -2,6 +2,8 @@
 
 > 一个面向学习与科研实践的小型语言模型项目：从 Transformer 核心结构实现出发，完成预训练、监督微调、数据加速、断点续训与交互式推理的完整闭环。
 
+文档入口：[完整文档导航](docs/README.md) · [模型与生成](docs/model/causal_lm.md) · [SFT 流程](docs/training/full_sft.md) · [数据缓存](docs/data/sft_cache.md) · [LoRA / DPO / GRPO](docs/training/alignment.md) · [指标与曲线](docs/experiments/training_metrics.md)
+
 MyMiniMind 是一个基于 PyTorch 和 Hugging Face Transformers 构建的轻量级因果语言模型（Causal Language Model）。项目并非只调用封装好的训练接口，而是围绕语言模型的关键环节进行自主实现与工程化组织，包括注意力机制、位置编码、前馈网络、训练循环、对话标签构造、KV Cache 和采样解码等。
 
 本项目希望以可阅读、可运行、可扩展的代码，探索小参数语言模型从“学习语言规律”到“遵循对话指令”的完整过程，并为后续研究 LoRA、MoE、长上下文和偏好对齐提供实验基础。
@@ -14,7 +16,7 @@ MyMiniMind 是一个基于 PyTorch 和 Hugging Face Transformers 构建的轻量
 - **面向对话的监督设计**：基于 Chat Template 构造多轮上下文，通过 assistant-only loss mask 只监督助手回复，避免对用户问题和系统提示计算损失。
 - **大规模数据预处理优化**：使用多进程分词与 int16 memmap 预缓存约 90 万条 SFT 样本，减少训练期间重复模板渲染和 Tokenization 的 CPU 开销。
 - **较完整的训练工程能力**：支持混合精度、梯度累积、梯度裁剪、余弦学习率调度、DDP 多卡训练、`torch.compile` 和原子化 checkpoint。
-- **研究扩展接口**：模型支持可选 MoE 和 YaRN 长上下文外推，并提供 LoRA 注入、加载、保存与权重合并能力。
+- **参数高效微调与偏好对齐**：提供 LoRA SFT、DPO 和 GRPO 训练入口，支持自定义奖励、冻结参考策略、断点续训与 LoRA 合并导出。
 
 ## 已完成工作
 
@@ -69,8 +71,8 @@ flowchart LR
 
 ```text
 原始文本
-   │
-   ▼
+    │
+    ▼
 Pretraining ── 学习 next-token prediction
    │
    ▼
@@ -212,6 +214,49 @@ uv run python eval_llm.py \
 
 程序提供自动测试与手动输入两种模式，并通过 TextStreamer 实时输出生成内容和解码速度。
 
+## LoRA、DPO 与 GRPO
+
+以下命令从仓库根目录运行。LoRA 使用现有 SFT 数据；DPO 需要 chosen/rejected 偏好对，GRPO 需要任务提示和可验证答案或自定义奖励。
+
+```bash
+# LoRA SFT：默认从 full_sft 基础权重开始
+uv run python trainer/train_lora.py --data_path dataset/sft_t2t_mini.jsonl --cache_data
+
+# DPO：将路径替换为自己的偏好数据
+uv run python trainer/train_dpo.py --data_path dataset/my_preferences.jsonl
+
+# GRPO：默认采用答案精确匹配奖励
+uv run python trainer/train_grpo.py --data_path dataset/my_math_prompts.jsonl
+
+# 推理：LoRA 适配器 / 完整 DPO 权重
+uv run python eval_llm.py --weight full_sft --lora_weight lora_sft
+uv run python eval_llm.py --weight dpo
+```
+
+DPO、GRPO 也支持 `--use_lora`。完整的数据格式、训练参数、奖励接口、合并导出、续训及测试说明见 [对齐训练指南](docs/training/alignment.md)。`dataset/examples/` 提供三个阶段的小型示例，仅用于验证管线。
+
+## 训练指标与曲线
+
+训练入口自动保存本地 JSONL，包含 Loss、Learning Rate、有效输入 token/s、活跃耗时及 CUDA allocated/reserved 峰值。可生成 PNG、SVG、PDF 四项曲线：
+
+```bash
+uv run python experiments/plot_metrics.py \
+  out/lora_sft_768.metrics.jsonl --output_dir out/lora_curves
+```
+
+指标定义与使用方式见 [训练指标与曲线说明](docs/experiments/training_metrics.md)。生成的 `*.metrics.jsonl`、`*.metrics.meta.json`、`*.metrics.csv`、`*.metrics.json` 及本地运行目录均由 `.gitignore` 排除。
+
+改进 DPO 已将固定测试集的偏好准确率从 **55.86% 提高到 61.72%**（143/256 → 158/256）。[查看训练结果与模型用法](docs/experiments/zh_preference_result.md)。
+
+公开中文偏好数据的四方法对比使用国内镜像下载的 [DPO-En-Zh-20k](https://hf-mirror.com/datasets/llamafactory/DPO-En-Zh-20k) 中文偏好对，以及冻结的 [Skywork-Reward-V2-Qwen3-0.6B](https://hf-mirror.com/Skywork/Skywork-Reward-V2-Qwen3-0.6B)。数据来源、固定版本、划分、预算及评测口径见 [实验说明](docs/experiments/zh_preference.md)。
+
+```bash
+uv run python experiments/download_preference.py
+uv run python experiments/run_preference.py \
+  --config configs/experiments/zh_preference.json \
+  --output_dir experiments/runs/zh_preference_20261029 --device cuda:0
+```
+
 ## 项目结构
 
 ```text
@@ -227,9 +272,26 @@ myMinimind/
 │   └── sft_t2t_mini.jsonl
 ├── trainer/
 │   ├── train_pretrain.py      # 预训练入口
-│   ├── train_full_sft.py      # 全参数 SFT 入口
+│   ├── train_full_sft.py      # 原有全参数 SFT 入口
+│   ├── train_sft.py           # 统一指标的全参数 SFT 入口
+│   ├── train_lora.py          # LoRA SFT 入口
+│   ├── train_dpo.py           # DPO 偏好训练入口
+│   ├── train_grpo.py          # GRPO 在线采样训练入口
+│   ├── train_alignment.py     # 对齐训练循环、DDP 与续训
+│   ├── alignment_objectives.py # DPO/GRPO 损失及奖励
+│   ├── merge_lora.py          # LoRA 合并导出
+│   ├── metrics.py             # 本地指标、计时及显存测量
 │   └── trainer_utils.py       # DDP、学习率、checkpoint 等工具
-├── notes/                     # 核心代码与训练机制的中文笔记
+├── docs/
+│   ├── README.md              # 文档导航
+│   ├── model/causal_lm.md     # 模型前向与生成逻辑
+│   ├── training/full_sft.md   # SFT 训练流程
+│   ├── training/alignment.md # LoRA/DPO/GRPO 使用指南
+│   ├── data/sft_cache.md      # 数据缓存机制
+│   └── experiments/          # 指标与曲线说明
+├── experiments/              # 镜像下载、公开偏好实验、统一评测与绘图
+├── configs/experiments/      # 固定实验配置
+├── tests/                     # 对齐目标与端到端训练测试
 ├── checkpoints/               # 可恢复训练状态
 ├── out/                       # 推理模型权重
 ├── eval_llm.py                # 交互式推理评测
@@ -252,9 +314,7 @@ myMinimind/
 ## 后续计划
 
 - 增加独立验证集与 Perplexity、生成质量等评测指标；
-- 保存训练指标并绘制 Loss、Learning Rate、吞吐和显存曲线；
-- 补充完整的 LoRA SFT 训练入口与对比实验；
-- 探索 DPO/GRPO 等偏好优化方法；
+- 扩大四方法对比的数据规模，增加训练种子并改进 SFT、LoRA 与 GRPO 的效果；
 - 对比不同 GQA、MoE 和上下文长度配置的计算效率与模型表现；
 - 完善单元测试、配置管理和 Hugging Face 格式导出。
 

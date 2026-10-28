@@ -1,12 +1,16 @@
 # SFT（监督微调）代码完整解读
 
+[文档首页](../README.md) · [项目首页](../../README.md)
+
 ## 1. 整体架构：SFT 在训练流程中的位置
 
 ```
-Pretrain（预训练）  →  Full SFT（全量微调）  →  LoRA SFT / RLHF / DPO ...
+Pretrain（预训练）  →  Full SFT（全量微调）  →  LoRA SFT / DPO / GRPO
      ↓                       ↓
   学习"语言"              学习"对话格式+遵循指令"
 ```
+
+LoRA、DPO、GRPO 的操作说明见 [对齐训练指南](alignment.md)，缓存实现见 [SFT 数据预缓存](../data/sft_cache.md)。对应源码：[train_full_sft.py](../../trainer/train_full_sft.py)、[lm_dataset.py](../../dataset/lm_dataset.py)。
 
 **训练脚本**: `trainer/train_full_sft.py`
 **数据集类**: `dataset/lm_dataset.py` → `SFTDataset`
@@ -101,7 +105,7 @@ input_ids = tokenizer(prompt).input_ids[:self.max_length]
 input_ids += [tokenizer.pad_token_id] * (self.max_length - len(input_ids))
 ```
 
-标准左填充到 `max_length`（默认 768）。
+在序列右侧填充到 `max_length`（全参数 SFT 脚本默认 768）。
 
 #### 步骤 5: `generate_labels()` —— 核心 (line 86-102)
 

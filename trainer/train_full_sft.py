@@ -7,6 +7,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import argparse
 import time
 import warnings
+import math
+from pathlib import Path
 import torch
 import torch.distributed as dist
 from contextlib import nullcontext
@@ -15,6 +17,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_myminimind import MyMiniMindConfig
 from dataset.lm_dataset import SFTDataset, CachedSFTDataset, build_sft_cache
+from trainer.metrics import MetricWriter, PerformanceMonitor
 from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
 
 warnings.filterwarnings('ignore')
@@ -23,6 +26,8 @@ warnings.filterwarnings('ignore')
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
     start_time = time.time()
     last_step = start_step
+    monitor = performance_monitor
+    monitor.begin()
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
@@ -57,6 +62,14 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             Logger(f'Epoch:[{epoch + 1}/{args.epochs}]({step}/{iters}), loss: {current_loss:.4f}, logits_loss: {current_logits_loss:.4f}, aux_loss: {current_aux_loss:.4f}, lr: {current_lr:.8f}, epoch_time: {eta_min:.1f}min')
             if wandb: wandb.log({"loss": current_loss, "logits_loss": current_logits_loss, "aux_loss": current_aux_loss, "learning_rate": current_lr, "epoch_time": eta_min})
 
+        performance = monitor.finish(input_ids.shape[0],
+            int((input_ids != tokenizer.pad_token_id).sum()),
+            int((labels[:, 1:] != -100).sum()))
+        if metric_writer is not None:
+            metric_writer.write({'step': epoch * iters + step, 'epoch': epoch + 1,
+                'loss': loss.item() * args.accumulation_steps,
+                'learning_rate': lr, **performance})
+
         if (step % args.save_interval == 0 or step == iters) and is_main_process():
             model.eval()
             moe_suffix = '_moe' if lm_config.use_moe else ''
@@ -71,6 +84,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             del state_dict
 
         del input_ids, labels, res, loss
+        monitor.begin()
 
     if last_step > start_step and last_step % args.accumulation_steps != 0:
         scaler.unscale_(optimizer)
@@ -105,6 +119,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Full-SFT", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
     parser.add_argument("--cache_data", action="store_true", help="使用预缓存的tokenized数据，跳过CPU密集的chat_template和label生成")
+    parser.add_argument("--metrics_path", help="Local JSONL path (default: save_dir/weight.metrics.jsonl)")
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
@@ -154,6 +169,15 @@ if __name__ == "__main__":
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
+    metric_path = args.metrics_path or str(Path(args.save_dir) / (
+        f'{args.save_weight}_{lm_config.hidden_size}{"_moe" if lm_config.use_moe else ""}.metrics.jsonl'))
+    batches_per_epoch = math.ceil(len(train_sampler if train_sampler is not None else train_ds) / args.batch_size)
+    metric_writer = MetricWriter(metric_path, {'stage': 'sft', 'args': vars(args),
+        'step_unit': 'microbatch', 'loss_contract': 'causal_lm_cross_entropy_plus_moe_aux'},
+        resume_step=start_epoch * batches_per_epoch + start_step if ckp_data else None) if is_main_process() else None
+
+    performance_monitor = PerformanceMonitor(args.device, metric_writer.elapsed_seconds if metric_writer else 0.)
+
     # ========== 7. 编译和分布式包装 ==========
     if args.use_compile == 1:
         model = torch.compile(model)

@@ -33,3 +33,13 @@ wandb/
 swanlog/
 runs/
 logs/
+# Generated training metrics and local experiment artifacts
+*.metrics.jsonl
+*.metrics.meta.json
+/experiments/runs/
+/dataset/downloads/
+/dataset/prepared/
+/models/
+
+*.metrics.csv
+*.metrics.json

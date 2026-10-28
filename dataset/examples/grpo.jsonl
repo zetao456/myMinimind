@@ -1,0 +1,3 @@
+{"prompt":"计算1+1，将最终答案写在<answer>和</answer>之间。","answer":"2"}
+{"prompt":"计算2+2，将最终答案写在<answer>和</answer>之间。","answer":["4","4.0"]}
+{"prompt":[{"role":"user","content":"计算3+2，只输出最终数字。"}],"answer":"5"}

@@ -1,5 +1,9 @@
 # MiniMindForCausalLM 逐行详解
 
+[文档首页](../README.md) · [项目首页](../../README.md)
+
+对应源码：[model_myminimind.py](../../model/model_myminimind.py)。训练中的标签构造见 [SFT 流程](../training/full_sft.md)，训练和推理入口见 [项目 README](../../README.md)。
+
 ## 类声明
 
 ```python
